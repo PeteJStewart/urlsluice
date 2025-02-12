@@ -2,15 +2,19 @@ package main
 
 import (
 	"bufio"
-	"flag"
+	"context"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/PeteJStewart/urlsluice/internal/extractor"
 )
 
 // Regex patterns for UUIDs, emails, domains, IPs, and query parameters.
@@ -50,12 +54,28 @@ func newExtractionResults() *ExtractionResults {
 }
 
 // extractData opens the file and iterates through its lines, applying the various extraction functions.
-func extractData(filePath string, uuidVersion int, extractEmails, extractDomains, extractIPs, extractQueryParams, silent bool) {
+func extractData(ctx context.Context, filePath string, uuidVersion int, extractEmails, extractDomains, extractIPs, extractQueryParams, silent bool) error {
+	// Add timeout if not set in context
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
+		defer cancel()
+	}
+
 	file, err := os.Open(filePath)
 	if err != nil {
-		log.Fatalf("Error opening file: %v", err)
+		return fmt.Errorf("error opening file: %w", err)
 	}
 	defer file.Close()
+
+	// Add file size check
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("error getting file info: %w", err)
+	}
+	if info.Size() > 100*1024*1024 { // 100MB limit
+		return fmt.Errorf("file too large: maximum size is 100MB")
+	}
 
 	results := newExtractionResults()
 
@@ -94,6 +114,8 @@ func extractData(filePath string, uuidVersion int, extractEmails, extractDomains
 	printExtractedData("Domains", results.Domains, silent)
 	printExtractedData("IP Addresses", results.IPs, silent)
 	printExtractedData("Query Parameters", results.Params, silent)
+
+	return nil
 }
 
 // extractUUIDs uses the given regex to find and store UUIDs.
@@ -126,7 +148,9 @@ func extractDomainsFromLine(line string, domainMap map[string]bool) {
 func extractIPsFromLine(line string, ipMap map[string]bool) {
 	matches := ipRegex.FindAllString(line, -1)
 	for _, ip := range matches {
-		ipMap[ip] = true
+		if net.ParseIP(ip) != nil {
+			ipMap[ip] = true
+		}
 	}
 }
 
@@ -197,33 +221,34 @@ func generateHelpText(w io.Writer, progName string) {
 }
 
 func main() {
-	flag.Usage = func() {
-		generateHelpText(os.Stderr, getProgramName())
-	}
+	ctx := context.Background()
 
-	// Command-line flags
-	filePath := flag.String("file", "", "Path to the input file")
-	uuidVersion := flag.Int("uuid", 4, "UUID version to extract (1-5)")
-	extractEmails := flag.Bool("emails", false, "Extract email addresses")
-	extractDomains := flag.Bool("domains", false, "Extract domain names")
-	extractIPs := flag.Bool("ips", false, "Extract IP addresses")
-	extractQueryParams := flag.Bool("queryParams", false, "Extract query parameters")
-	silent := flag.Bool("silent", false, "Output data without titles")
-	help := flag.Bool("help", false, "Show help message")
-	flag.Parse()
-
-	// Show help if -help flag is used or no arguments are provided
-	if *help || len(os.Args) == 1 {
-		flag.Usage()
-		return
-	}
-
-	if *filePath == "" {
-		fmt.Fprintln(os.Stderr, "Error: Please provide a file path using -file")
-		flag.Usage()
+	if err := run(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
 
-	// Begin extraction based on the provided flags
-	extractData(*filePath, *uuidVersion, *extractEmails, *extractDomains, *extractIPs, *extractQueryParams, *silent)
+func run(ctx context.Context) error {
+	// Flag parsing and validation
+	config, err := parseFlags()
+	if err != nil {
+		return fmt.Errorf("error parsing flags: %w", err)
+	}
+
+	// Create extractor
+	ext := extractor.New(config)
+
+	// Process file
+	results, err := ext.Extract(ctx, config.FilePath)
+	if err != nil {
+		return fmt.Errorf("extraction failed: %w", err)
+	}
+
+	// Print results
+	if err := printResults(results, config.Silent); err != nil {
+		return fmt.Errorf("error printing results: %w", err)
+	}
+
+	return nil
 }
