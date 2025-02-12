@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"flag"
+
 	"github.com/PeteJStewart/urlsluice/internal/extractor"
 )
 
@@ -51,6 +53,17 @@ func newExtractionResults() *ExtractionResults {
 		IPs:     make(map[string]bool),
 		Params:  make(map[string]bool),
 	}
+}
+
+// Config holds the command-line configuration
+type Config struct {
+	FilePath       string
+	UUIDVersion    int
+	ExtractEmails  bool
+	ExtractDomains bool
+	ExtractIPs     bool
+	ExtractParams  bool
+	Silent         bool
 }
 
 // extractData opens the file and iterates through its lines, applying the various extraction functions.
@@ -236,11 +249,27 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error parsing flags: %w", err)
 	}
 
+	// Open the file
+	file, err := os.Open(config.FilePath)
+	if err != nil {
+		return fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
 	// Create extractor
-	ext := extractor.New(config)
+	ext, err := extractor.New(extractor.Config{
+		UUIDVersion:    config.UUIDVersion,
+		ExtractEmails:  config.ExtractEmails,
+		ExtractDomains: config.ExtractDomains,
+		ExtractIPs:     config.ExtractIPs,
+		ExtractParams:  config.ExtractParams,
+	})
+	if err != nil {
+		return fmt.Errorf("error creating extractor: %w", err)
+	}
 
 	// Process file
-	results, err := ext.Extract(ctx, config.FilePath)
+	results, err := ext.Extract(ctx, file)
 	if err != nil {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
@@ -251,4 +280,46 @@ func run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func printResults(results extractor.Results, silent bool) error {
+	printSection := func(label string, items map[string]bool) {
+		if len(items) == 0 {
+			return
+		}
+		if !silent {
+			fmt.Printf("\nExtracted %s:\n", label)
+		}
+		for item := range items {
+			fmt.Println(item)
+		}
+	}
+
+	printSection("UUIDs", results.UUIDs)
+	printSection("Email Addresses", results.Emails)
+	printSection("Domains", results.Domains)
+	printSection("IP Addresses", results.IPs)
+	printSection("Query Parameters", results.Params)
+
+	return nil
+}
+
+func parseFlags() (*Config, error) {
+	config := &Config{}
+
+	flag.StringVar(&config.FilePath, "file", "", "Path to the input file (required)")
+	flag.IntVar(&config.UUIDVersion, "uuid", 4, "UUID version to extract (1-5)")
+	flag.BoolVar(&config.ExtractEmails, "emails", false, "Extract email addresses")
+	flag.BoolVar(&config.ExtractDomains, "domains", false, "Extract domain names")
+	flag.BoolVar(&config.ExtractIPs, "ips", false, "Extract IP addresses")
+	flag.BoolVar(&config.ExtractParams, "queryParams", false, "Extract query parameters")
+	flag.BoolVar(&config.Silent, "silent", false, "Output data without titles")
+
+	flag.Parse()
+
+	if config.FilePath == "" {
+		return nil, fmt.Errorf("file path is required")
+	}
+
+	return config, nil
 }

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/PeteJStewart/urlsluice/internal/patterns"
@@ -68,57 +69,85 @@ type extractor struct {
 }
 
 // New creates a new Extractor with the given configuration
-func New(config Config) Extractor {
+func New(config Config) (Extractor, error) {
+	if config.UUIDVersion < 0 || config.UUIDVersion > 5 {
+		return nil, &ExtractorError{Op: "New", Err: fmt.Errorf("invalid UUID version: must be between 0 and 5")}
+	}
 	return &extractor{
 		config: config,
+	}, nil
+}
+
+func (e *extractor) newResults() Results {
+	r := Results{}
+	if e.config.UUIDVersion > 0 {
+		r.UUIDs = make(map[string]bool)
 	}
+	if e.config.ExtractEmails {
+		r.Emails = make(map[string]bool)
+	}
+	if e.config.ExtractDomains {
+		r.Domains = make(map[string]bool)
+	}
+	if e.config.ExtractIPs {
+		r.IPs = make(map[string]bool)
+	}
+	if e.config.ExtractParams {
+		r.Params = make(map[string]bool)
+	}
+	return r
 }
 
 func (e *extractor) processChunk(ctx context.Context, data string) Results {
-	results := Results{
-		UUIDs:   make(map[string]bool),
-		Emails:  make(map[string]bool),
-		Domains: make(map[string]bool),
-		IPs:     make(map[string]bool),
-		Params:  make(map[string]bool),
+	select {
+	case <-ctx.Done():
+		return e.newResults()
+	default:
 	}
 
-	// Process UUIDs
-	if e.config.UUIDVersion > 0 {
-		if regex, ok := patterns.UUIDRegexMap[e.config.UUIDVersion]; ok {
-			for _, uuid := range regex.FindAllString(data, -1) {
-				results.UUIDs[uuid] = true
+	results := e.newResults()
+	scanner := bufio.NewScanner(strings.NewReader(data))
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		if e.config.UUIDVersion > 0 {
+			if regex, ok := patterns.UUIDRegexMap[e.config.UUIDVersion]; ok {
+				for _, uuid := range regex.FindAllString(line, -1) {
+					results.UUIDs[uuid] = true
+				}
 			}
 		}
-	}
 
-	// Process other patterns
-	if e.config.ExtractEmails {
-		for _, email := range patterns.EmailRegex.FindAllString(data, -1) {
-			results.Emails[email] = true
-		}
-	}
-
-	if e.config.ExtractDomains {
-		for _, match := range patterns.DomainRegex.FindAllStringSubmatch(data, -1) {
-			if len(match) > 1 {
-				results.Domains[match[1]] = true
+		if e.config.ExtractEmails {
+			for _, email := range patterns.EmailRegex.FindAllString(line, -1) {
+				results.Emails[email] = true
 			}
 		}
-	}
 
-	if e.config.ExtractIPs {
-		for _, ip := range patterns.IPRegex.FindAllString(data, -1) {
-			if net.ParseIP(ip) != nil {
-				results.IPs[ip] = true
+		if e.config.ExtractDomains {
+			matches := patterns.DomainRegex.FindAllStringSubmatch(line, -1)
+			for _, match := range matches {
+				if len(match) > 1 && !strings.HasPrefix(match[1], ".") && !strings.HasSuffix(match[1], ".") {
+					results.Domains[match[1]] = true
+				}
 			}
 		}
-	}
 
-	if e.config.ExtractParams {
-		for _, match := range patterns.QueryParamRegex.FindAllStringSubmatch(data, -1) {
-			if len(match) > 2 {
-				results.Params[fmt.Sprintf("%s=%s", match[1], match[2])] = true
+		if e.config.ExtractIPs {
+			for _, ip := range patterns.IPRegex.FindAllString(line, -1) {
+				if net.ParseIP(ip) != nil {
+					results.IPs[ip] = true
+				}
+			}
+		}
+
+		if e.config.ExtractParams {
+			matches := patterns.QueryParamRegex.FindAllStringSubmatch(line, -1)
+			for _, match := range matches {
+				if len(match) > 2 {
+					results.Params[match[1]+"="+match[2]] = true
+				}
 			}
 		}
 	}
@@ -127,97 +156,99 @@ func (e *extractor) processChunk(ctx context.Context, data string) Results {
 }
 
 func (e *extractor) Extract(ctx context.Context, reader io.Reader) (Results, error) {
+	// First, check context before doing anything
+	if ctx.Err() != nil {
+		return e.newResults(), &ExtractorError{Op: "Extract", Err: ctx.Err()}
+	}
+
 	if reader == nil {
-		return Results{}, &ExtractorError{Op: "Extract", Err: fmt.Errorf("nil reader")}
+		return e.newResults(), &ExtractorError{Op: "Extract", Err: fmt.Errorf("nil reader")}
 	}
 
 	// Check file size
 	if f, ok := reader.(*os.File); ok {
 		info, err := f.Stat()
 		if err != nil {
-			return Results{}, &ExtractorError{Op: "Extract", Err: fmt.Errorf("error getting file info: %w", err)}
+			return e.newResults(), &ExtractorError{Op: "Extract", Err: fmt.Errorf("error getting file info: %w", err)}
 		}
 		if info.Size() > maxFileSize {
-			return Results{}, &ExtractorError{Op: "Extract", Err: fmt.Errorf("file too large: maximum size is 100MB")}
+			return e.newResults(), &ExtractorError{Op: "Extract", Err: fmt.Errorf("file too large: maximum size is 100MB")}
 		}
 	}
 
-	// Create buffered reader
-	bufReader := bufio.NewReader(reader)
-
-	// Create channels for chunk processing
 	chunks := make(chan chunk, maxGoroutines)
 	results := make(chan Results, maxGoroutines)
 	errors := make(chan error, 1)
 
-	// Start worker goroutines
 	var wg sync.WaitGroup
+
+	// Start worker goroutines
 	for i := 0; i < maxGoroutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for c := range chunks {
-				if c.err != nil {
+				select {
+				case <-ctx.Done():
 					select {
-					case errors <- c.err:
+					case errors <- ctx.Err():
 					default:
 					}
 					return
-				}
-				select {
-				case results <- e.processChunk(ctx, c.data):
-				case <-ctx.Done():
-					return
+				default:
+					if c.err != nil {
+						select {
+						case errors <- c.err:
+						default:
+						}
+						return
+					}
+					results <- e.processChunk(ctx, c.data)
 				}
 			}
 		}()
 	}
 
-	// Read and send chunks
+	// Read chunks
 	go func() {
 		defer close(chunks)
 		buffer := make([]byte, chunkSize)
 		for {
 			select {
 			case <-ctx.Done():
+				chunks <- chunk{err: ctx.Err()} // Send context error through chunks
 				return
 			default:
-				n, err := bufReader.Read(buffer)
+				n, err := reader.Read(buffer)
+				if err != nil && err != io.EOF {
+					chunks <- chunk{err: err}
+					return
+				}
 				if n > 0 {
 					chunks <- chunk{data: string(buffer[:n])}
 				}
 				if err == io.EOF {
 					return
 				}
-				if err != nil {
-					chunks <- chunk{err: err}
-					return
-				}
 			}
 		}
 	}()
 
-	// Wait for all workers to finish
+	// Close results after workers finish
 	go func() {
 		wg.Wait()
 		close(results)
 		close(errors)
 	}()
 
-	// Combine results
-	finalResults := Results{
-		UUIDs:   make(map[string]bool),
-		Emails:  make(map[string]bool),
-		Domains: make(map[string]bool),
-		IPs:     make(map[string]bool),
-		Params:  make(map[string]bool),
-	}
+	finalResults := e.newResults()
 
+	// Process results and errors
 	for {
 		select {
 		case err := <-errors:
 			if err != nil {
-				return Results{}, &ExtractorError{Op: "Extract", Err: err}
+				return e.newResults(), &ExtractorError{Op: "Extract", Err: err}
 			}
 		case r, ok := <-results:
 			if !ok {
@@ -240,7 +271,7 @@ func (e *extractor) Extract(ctx context.Context, reader io.Reader) (Results, err
 				finalResults.Params[k] = v
 			}
 		case <-ctx.Done():
-			return Results{}, &ExtractorError{Op: "Extract", Err: ctx.Err()}
+			return e.newResults(), &ExtractorError{Op: "Extract", Err: ctx.Err()}
 		}
 	}
 }

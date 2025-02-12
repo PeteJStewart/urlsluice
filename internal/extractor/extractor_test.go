@@ -123,9 +123,12 @@ user@example.com
 			ctx, cancel := tt.setupCtx()
 			defer cancel()
 
-			ext := New(tt.config)
-			reader := strings.NewReader(tt.input)
+			ext, err := New(tt.config)
+			if err != nil {
+				t.Fatalf("Failed to create extractor: %v", err)
+			}
 
+			reader := strings.NewReader(tt.input)
 			got, err := ext.Extract(ctx, reader)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Extract() error = %v, wantErr %v", err, tt.wantErr)
@@ -139,12 +142,15 @@ user@example.com
 }
 
 func TestExtractor_ExtractWithLargeFile(t *testing.T) {
-	// Create a large test file
-	largeContent := strings.Repeat("test content\n", 1024*1024) // ~11MB
+	largeContent := strings.Repeat("test content\n", 1024*1024*11) // Over 100MB
 	filepath, cleanup := createTestFile(t, largeContent)
 	defer cleanup()
 
-	ext := New(Config{ExtractEmails: true})
+	ext, err := New(Config{ExtractEmails: true})
+	if err != nil {
+		t.Fatalf("Failed to create extractor: %v", err)
+	}
+
 	file, err := os.Open(filepath)
 	if err != nil {
 		t.Fatal(err)
@@ -153,21 +159,22 @@ func TestExtractor_ExtractWithLargeFile(t *testing.T) {
 
 	ctx := context.Background()
 	_, err = ext.Extract(ctx, file)
-	if err == nil {
-		t.Error("Expected error for large file, got nil")
+	if err == nil || !strings.Contains(err.Error(), "file too large") {
+		t.Errorf("Expected 'file too large' error, got %v", err)
 	}
 }
 
 func TestExtractor_ExtractWithInvalidFile(t *testing.T) {
-	ext := New(Config{ExtractEmails: true})
+	ext, err := New(Config{ExtractEmails: true})
+	if err != nil {
+		t.Fatalf("Failed to create extractor: %v", err)
+	}
 
-	// Test with nil reader
-	_, err := ext.Extract(context.Background(), nil)
+	_, err = ext.Extract(context.Background(), nil)
 	if err == nil {
 		t.Error("Expected error for nil reader, got nil")
 	}
 
-	// Test with failing reader
 	failingReader := &failingReader{}
 	_, err = ext.Extract(context.Background(), failingReader)
 	if err == nil {
@@ -216,9 +223,8 @@ func TestExtractor_ExtractWithErrors(t *testing.T) {
 		{
 			name: "context cancelled",
 			setup: func() (io.Reader, Config) {
-				ctx, cancel := context.WithCancel(context.Background())
-				cancel() // Cancel immediately
-				return strings.NewReader("some content"), Config{}
+				// Create a large enough input to ensure processing time
+				return strings.NewReader(strings.Repeat("test content\n", 1000)), Config{}
 			},
 			wantErr: "context canceled",
 		},
@@ -227,18 +233,21 @@ func TestExtractor_ExtractWithErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reader, config := tt.setup()
-			ext := New(config)
-
-			ctx := context.Background()
-			_, err := ext.Extract(ctx, reader)
-
-			if err == nil {
-				t.Error("expected error, got nil")
+			ext, err := New(config)
+			if err != nil && !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("New() error = %v, want error containing %q", err, tt.wantErr)
 				return
 			}
-
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("expected error containing %q, got %q", tt.wantErr, err.Error())
+			if err == nil {
+				ctx, cancel := context.WithCancel(context.Background())
+				if tt.name == "context cancelled" {
+					cancel()
+				}
+				defer cancel()
+				_, err = ext.Extract(ctx, reader)
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("Extract() error = %v, want error containing %q", err, tt.wantErr)
+				}
 			}
 		})
 	}
@@ -281,9 +290,12 @@ ftp://invalid.com`,
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ext := New(tt.config)
-			reader := strings.NewReader(tt.input)
+			ext, err := New(tt.config)
+			if err != nil {
+				t.Fatalf("Failed to create extractor: %v", err)
+			}
 
+			reader := strings.NewReader(tt.input)
 			got, err := ext.Extract(context.Background(), reader)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
@@ -318,15 +330,53 @@ user@example.com
 		ExtractParams:  true,
 	}
 
-	ext := New(config)
-	ctx := context.Background()
+	ext, err := New(config)
+	if err != nil {
+		b.Fatalf("Failed to create extractor: %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		reader := strings.NewReader(builder.String())
-		_, err := ext.Extract(ctx, reader)
+		_, err := ext.Extract(context.Background(), reader)
 		if err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+func TestNew(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr bool
+	}{
+		{
+			name: "valid config",
+			config: Config{
+				UUIDVersion: 4,
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid UUID version",
+			config: Config{
+				UUIDVersion: 6,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext, err := New(tt.config)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && ext == nil {
+				t.Error("New() returned nil extractor without error")
+			}
+		})
 	}
 }
