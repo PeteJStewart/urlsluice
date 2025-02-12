@@ -1,13 +1,22 @@
 # URL Sluice
 
 [![Go CI](https://github.com/PeteJStewart/urlsluice/actions/workflows/go.yml/badge.svg)](https://github.com/PeteJStewart/urlsluice/actions/workflows/go.yml)
-URL Sluice is a powerful Go-based command-line tool for extracting and analyzing various patterns from text files containing URLs, logs, or any text content. It can identify and extract:
+[![Go Report Card](https://goreportcard.com/badge/github.com/PeteJStewart/urlsluice)](https://goreportcard.com/report/github.com/PeteJStewart/urlsluice)
+[![GoDoc](https://godoc.org/github.com/PeteJStewart/urlsluice?status.svg)](https://godoc.org/github.com/PeteJStewart/urlsluice)
 
-- UUIDs (versions 1-5)
-- Email addresses
-- Domain names
-- IP addresses
-- Query parameters
+URL Sluice is a high-performance Go tool for extracting patterns from text files. It processes data concurrently and efficiently handles large files while maintaining low memory usage.
+
+## Features
+
+- Concurrent processing with configurable worker pools
+- Memory-efficient chunked file processing
+- Context-aware operations with timeout support
+- Extracts multiple pattern types:
+  - UUIDs (versions 1-5)
+  - Email addresses
+  - Domain names
+  - IP addresses
+  - Query parameters
 
 ## Installation
 
@@ -16,13 +25,13 @@ URL Sluice is a powerful Go-based command-line tool for extracting and analyzing
 ```bash
 git clone https://github.com/yourusername/urlsluice.git
 cd urlsluice
-go build
+make build
 ```
 
 ### Using Go Install
 
 ```bash
-go install github.com/PeteJStewart/urlsluice@latest
+go install github.com/PeteJStewart/urlsluice/cmd/urlsluice@latest
 ```
 
 ## Usage
@@ -122,14 +131,83 @@ Output:
 - **IP Addresses**: Matches IPv4 addresses
 - **Query Parameters**: Extracts key-value pairs from URL query strings
 
-## Notes
+## Development
 
-- All extracted data is automatically deduplicated
-- Output is sorted alphabetically
-- The tool processes the file line by line, making it memory-efficient for large files
-- Use the `-silent` flag for clean output suitable for piping to other tools
+### Prerequisites
+- Go 1.21 or higher
+- Make
+
+### Getting Started
+1. Clone the repository
+2. Install dependencies: `make deps`
+3. Run tests: `make test`
+
+### Available Make Commands
+
+- `build`: Build the project
+- `test`: Run tests
+- `coverage`: Run tests with coverage
+- `lint`: Run linters
+- `clean`: Clean build artifacts
+- `docs`: Start the documentation server
+- `help`: Show available commands
+
+
+### Project Structure
+
+```bash
+urlsluice/
+├── cmd/
+│ └── urlsluice/
+├── internal/
+│ ├── config/
+│ ├── extractor/    
+│ └── utils/
+├── main.go
+├── go.mod
+├── Makefile
+└── README.md   
+```
+
+
+### Best Practices
+- Write tests for new features
+- Run `make lint` before committing
+- Follow Go's official [style guide](https://golang.org/doc/effective_go)
+- Add documentation for new features
+- Update CHANGELOG.md for notable changes
+
+### Performance Considerations
+- Default chunk size: 1MB
+- Maximum file size: 100MB
+- Concurrent workers: 4 (configurable)
+- Memory usage: ~10MB for 100MB file
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch: `git checkout -b feature/my-feature`
+3. Commit your changes: `git commit -am 'Add new feature'`
+4. Push to the branch: `git push origin feature/my-feature`
+5. Submit a pull request
+
+### Pull Request Guidelines
+- Include tests for new features
+- Update documentation as needed
+- Follow existing code style
+- Keep changes focused and atomic
 
 ## License
 
-MIT License
+MIT License - see LICENSE file for details
+
+## Notes
+
+- All extracted data is automatically deduplicated
+- Results are sorted alphabetically by default
+- Memory-efficient streaming processing
+- Context cancellation support
+- Configurable timeout (default: 5 minutes)
+- The tool processes the file line by line, making it memory-efficient for large files
+- Use the `-silent` flag for clean output suitable for piping to other tools
 
