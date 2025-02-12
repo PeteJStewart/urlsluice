@@ -9,7 +9,8 @@ import (
 	"net"
 	"os"
 	"sync"
-	"urlsluice/internal/patterns"
+
+	"github.com/PeteJStewart/urlsluice/internal/patterns"
 )
 
 // ExtractorError represents an error that occurred during extraction
