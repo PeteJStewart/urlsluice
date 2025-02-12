@@ -1,62 +1,18 @@
-// Package main provides the command-line interface for URL Sluice.
-// It handles flag parsing, configuration, and orchestrates the pattern extraction process.
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"log"
-	"net"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"flag"
 
 	"github.com/PeteJStewart/urlsluice/internal/extractor"
 )
-
-// Regex patterns for UUIDs, emails, domains, IPs, and query parameters.
-var (
-	uuidRegexMap = map[int]*regexp.Regexp{
-		1: regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-1[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}`),
-		2: regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-2[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}`),
-		3: regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-3[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}`),
-		4: regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}`),
-		5: regexp.MustCompile(`[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}`),
-	}
-
-	emailRegex      = regexp.MustCompile(`[\w._%+-]+@[\w.-]+\.[a-zA-Z]{2,}`)
-	domainRegex     = regexp.MustCompile(`https?://([a-zA-Z0-9.-]+)/?`)
-	ipRegex         = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
-	queryParamRegex = regexp.MustCompile(`[?&]([^&=]+)=([^&=]*)`)
-)
-
-// ExtractionResults holds the extracted values.
-type ExtractionResults struct {
-	UUIDs   map[string]bool
-	Emails  map[string]bool
-	Domains map[string]bool
-	IPs     map[string]bool
-	Params  map[string]bool
-}
-
-// newExtractionResults creates an initialized ExtractionResults struct.
-func newExtractionResults() *ExtractionResults {
-	return &ExtractionResults{
-		UUIDs:   make(map[string]bool),
-		Emails:  make(map[string]bool),
-		Domains: make(map[string]bool),
-		IPs:     make(map[string]bool),
-		Params:  make(map[string]bool),
-	}
-}
 
 // Config holds the command-line configuration
 type Config struct {
@@ -67,136 +23,6 @@ type Config struct {
 	ExtractIPs     bool
 	ExtractParams  bool
 	Silent         bool
-}
-
-// extractData opens the file and iterates through its lines, applying the various extraction functions.
-func extractData(ctx context.Context, filePath string, uuidVersion int, extractEmails, extractDomains, extractIPs, extractQueryParams, silent bool) error {
-	// Add timeout if not set in context
-	if _, ok := ctx.Deadline(); !ok {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 5*time.Minute)
-		defer cancel()
-	}
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("error opening file: %w", err)
-	}
-	defer file.Close()
-
-	// Add file size check
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("error getting file info: %w", err)
-	}
-	if info.Size() > 100*1024*1024 { // 100MB limit
-		return fmt.Errorf("file too large: maximum size is 100MB")
-	}
-
-	results := newExtractionResults()
-
-	// Select the UUID regex based on the provided version.
-	uuidRegex, exists := uuidRegexMap[uuidVersion]
-	if !exists {
-		log.Fatalf("Error: Unsupported UUID version. Use 1-5.")
-	}
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// Extract data from the current line.
-		extractUUIDs(line, uuidRegex, results.UUIDs)
-		if extractEmails {
-			extractEmailsFromLine(line, results.Emails)
-		}
-		if extractDomains {
-			extractDomainsFromLine(line, results.Domains)
-		}
-		if extractIPs {
-			extractIPsFromLine(line, results.IPs)
-		}
-		if extractQueryParams {
-			extractQueryParamsFromLine(line, results.Params)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		log.Fatalf("Error reading file: %v", err)
-	}
-
-	// Print all extracted data.
-	printExtractedData("UUIDs", results.UUIDs, silent)
-	printExtractedData("Email Addresses", results.Emails, silent)
-	printExtractedData("Domains", results.Domains, silent)
-	printExtractedData("IP Addresses", results.IPs, silent)
-	printExtractedData("Query Parameters", results.Params, silent)
-
-	return nil
-}
-
-// extractUUIDs uses the given regex to find and store UUIDs.
-func extractUUIDs(line string, uuidRegex *regexp.Regexp, uuidMap map[string]bool) {
-	matches := uuidRegex.FindAllString(line, -1)
-	for _, uuid := range matches {
-		uuidMap[uuid] = true
-	}
-}
-
-// extractEmailsFromLine extracts email addresses from the line.
-func extractEmailsFromLine(line string, emailMap map[string]bool) {
-	matches := emailRegex.FindAllString(line, -1)
-	for _, email := range matches {
-		emailMap[email] = true
-	}
-}
-
-// extractDomainsFromLine extracts domain names from the line.
-func extractDomainsFromLine(line string, domainMap map[string]bool) {
-	matches := domainRegex.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) > 1 {
-			domainMap[match[1]] = true
-		}
-	}
-}
-
-// extractIPsFromLine extracts IP addresses from the line.
-func extractIPsFromLine(line string, ipMap map[string]bool) {
-	matches := ipRegex.FindAllString(line, -1)
-	for _, ip := range matches {
-		if net.ParseIP(ip) != nil {
-			ipMap[ip] = true
-		}
-	}
-}
-
-// extractQueryParamsFromLine extracts query parameters and their values from the line.
-func extractQueryParamsFromLine(line string, paramMap map[string]bool) {
-	matches := queryParamRegex.FindAllStringSubmatch(line, -1)
-	for _, match := range matches {
-		if len(match) > 2 {
-			paramMap[fmt.Sprintf("%s=%s", match[1], match[2])] = true
-		}
-	}
-}
-
-// printExtractedData prints the extracted data in sorted order.
-// If silent is true, it prints only the values without the header label.
-func printExtractedData(label string, dataMap map[string]bool, silent bool) {
-	if len(dataMap) == 0 {
-		return
-	}
-	if !silent {
-		fmt.Printf("\nExtracted %s:\n", label)
-	}
-	keys := make([]string, 0, len(dataMap))
-	for k := range dataMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Println(k)
-	}
 }
 
 func getProgramName() string {
@@ -246,18 +72,11 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	// Flag parsing and validation
+	// Parse flags
 	config, err := parseFlags()
 	if err != nil {
 		return fmt.Errorf("error parsing flags: %w", err)
 	}
-
-	// Open the file
-	file, err := os.Open(config.FilePath)
-	if err != nil {
-		return fmt.Errorf("error opening file: %w", err)
-	}
-	defer file.Close()
 
 	// Create extractor
 	ext, err := extractor.New(extractor.Config{
@@ -271,6 +90,13 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error creating extractor: %w", err)
 	}
 
+	// Open and process file
+	file, err := os.Open(config.FilePath)
+	if err != nil {
+		return fmt.Errorf("error opening file: %w", err)
+	}
+	defer file.Close()
+
 	// Process file
 	results, err := ext.Extract(ctx, file)
 	if err != nil {
@@ -278,11 +104,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Print results
-	if err := printResults(results, config.Silent); err != nil {
-		return fmt.Errorf("error printing results: %w", err)
-	}
-
-	return nil
+	return printResults(results, config.Silent)
 }
 
 func printResults(results extractor.Results, silent bool) error {
@@ -290,10 +112,18 @@ func printResults(results extractor.Results, silent bool) error {
 		if len(items) == 0 {
 			return
 		}
+
+		// Convert map keys to sorted slice
+		sorted := make([]string, 0, len(items))
+		for item := range items {
+			sorted = append(sorted, item)
+		}
+		sort.Strings(sorted)
+
 		if !silent {
 			fmt.Printf("\nExtracted %s:\n", label)
 		}
-		for item := range items {
+		for _, item := range sorted {
 			fmt.Println(item)
 		}
 	}
@@ -325,29 +155,4 @@ func parseFlags() (*Config, error) {
 	}
 
 	return config, nil
-}
-
-func processFile(config *Config) error {
-	content, err := os.ReadFile(config.FilePath)
-	if err != nil {
-		return err
-	}
-
-	ext, err := extractor.New(extractor.Config{
-		UUIDVersion:    config.UUIDVersion,
-		ExtractEmails:  config.ExtractEmails,
-		ExtractDomains: config.ExtractDomains,
-		ExtractIPs:     config.ExtractIPs,
-		ExtractParams:  config.ExtractParams,
-	})
-	if err != nil {
-		return err
-	}
-
-	results, err := ext.Extract(context.Background(), bytes.NewReader(content))
-	if err != nil {
-		return err
-	}
-
-	return printResults(results, config.Silent)
 }

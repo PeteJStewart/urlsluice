@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/PeteJStewart/urlsluice/internal/extractor"
 )
 
 // Move osExit to package level
@@ -18,37 +21,37 @@ func restoreExit() {
 	osExit = os.Exit
 }
 
-func TestPrintExtractedData(t *testing.T) {
+func TestPrintResults(t *testing.T) {
 	tests := []struct {
 		name     string
-		label    string
-		dataMap  map[string]bool
+		results  extractor.Results
 		silent   bool
 		expected string
 	}{
 		{
-			name:  "normal output",
-			label: "Emails",
-			dataMap: map[string]bool{
-				"test@example.com": true,
-				"abc@example.com":  true,
+			name: "normal output",
+			results: extractor.Results{
+				Emails: map[string]bool{
+					"test@example.com": true,
+					"abc@example.com":  true,
+				},
 			},
 			silent:   false,
 			expected: "\nExtracted Emails:\nabc@example.com\ntest@example.com\n",
 		},
 		{
-			name:  "silent output",
-			label: "Emails",
-			dataMap: map[string]bool{
-				"test@example.com": true,
+			name: "silent output",
+			results: extractor.Results{
+				Emails: map[string]bool{
+					"test@example.com": true,
+				},
 			},
 			silent:   true,
 			expected: "test@example.com\n",
 		},
 		{
-			name:     "empty map",
-			label:    "Emails",
-			dataMap:  map[string]bool{},
+			name:     "empty results",
+			results:  extractor.Results{},
 			silent:   false,
 			expected: "",
 		},
@@ -60,7 +63,7 @@ func TestPrintExtractedData(t *testing.T) {
 			r, w, _ := os.Pipe()
 			os.Stdout = w
 
-			printExtractedData(tt.label, tt.dataMap, tt.silent)
+			printResults(tt.results, tt.silent)
 
 			w.Close()
 			var buf bytes.Buffer
@@ -68,7 +71,7 @@ func TestPrintExtractedData(t *testing.T) {
 			os.Stdout = old
 
 			if got := buf.String(); got != tt.expected {
-				t.Errorf("printExtractedData() = %q, want %q", got, tt.expected)
+				t.Errorf("printResults() = %q, want %q", got, tt.expected)
 			}
 		})
 	}
@@ -128,66 +131,48 @@ func TestParseFlags(t *testing.T) {
 	}
 }
 
-func TestProcessFile(t *testing.T) {
+func TestRun(t *testing.T) {
 	tests := []struct {
 		name        string
 		content     string
-		config      *Config
+		args        []string
 		wantErr     bool
 		wantErrText string
 	}{
 		{
 			name:    "valid content with emails",
 			content: "Contact us at test@example.com or support@example.com",
-			config: &Config{
-				ExtractEmails: true,
-				Silent:        false,
-			},
+			args:    []string{"-emails", "-file", "testfile"},
 			wantErr: false,
 		},
 		{
 			name:    "valid content with domains",
 			content: "Visit https://example.com or http://test.com",
-			config: &Config{
-				ExtractDomains: true,
-				Silent:         false,
-			},
+			args:    []string{"-domains", "-file", "testfile"},
 			wantErr: false,
 		},
 		{
 			name:    "valid content with IPs",
 			content: "Server IPs: 192.168.1.1 and 10.0.0.1",
-			config: &Config{
-				ExtractIPs: true,
-				Silent:     false,
-			},
+			args:    []string{"-ips", "-file", "testfile"},
 			wantErr: false,
 		},
 		{
 			name:    "valid content with query params",
 			content: "URL: https://example.com?param1=value1&param2=value2",
-			config: &Config{
-				ExtractParams: true,
-				Silent:        false,
-			},
+			args:    []string{"-queryParams", "-file", "testfile"},
 			wantErr: false,
 		},
 		{
 			name:    "valid content with UUIDs",
 			content: "UUID: 550e8400-e29b-41d4-a716-446655440000",
-			config: &Config{
-				UUIDVersion: 4,
-				Silent:      false,
-			},
+			args:    []string{"-uuid", "4", "-file", "testfile"},
 			wantErr: false,
 		},
 		{
 			name:    "empty content",
 			content: "",
-			config: &Config{
-				ExtractEmails: true,
-				Silent:        false,
-			},
+			args:    []string{"-emails", "-file", "testfile"},
 			wantErr: false,
 		},
 	}
@@ -209,28 +194,32 @@ func TestProcessFile(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Set the filepath in config
-			tt.config.FilePath = tmpfile.Name()
+			// Set up clean flag set
+			oldArgs := os.Args
+			oldFlagCommandLine := flag.CommandLine
+			defer func() {
+				os.Args = oldArgs
+				flag.CommandLine = oldFlagCommandLine
+			}()
 
-			// Capture stdout
-			old := os.Stdout
-			r, w, _ := os.Pipe()
-			os.Stdout = w
+			flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 
-			err = processFile(tt.config)
-
-			// Restore stdout
-			w.Close()
-			os.Stdout = old
-			var buf bytes.Buffer
-			buf.ReadFrom(r)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("processFile() error = %v, wantErr %v", err, tt.wantErr)
-				return
+			// Update args to use the temp file
+			args := make([]string, len(tt.args))
+			copy(args, tt.args)
+			for i, arg := range args {
+				if arg == "testfile" {
+					args[i] = tmpfile.Name()
+				}
 			}
-			if err != nil && !strings.Contains(err.Error(), tt.wantErrText) {
-				t.Errorf("processFile() error = %v, want error containing %q", err, tt.wantErrText)
+			os.Args = append([]string{"cmd"}, args...)
+
+			err = run(context.Background())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("run() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && tt.wantErrText != "" && !strings.Contains(err.Error(), tt.wantErrText) {
+				t.Errorf("run() error = %v, want error containing %q", err, tt.wantErrText)
 			}
 		})
 	}
