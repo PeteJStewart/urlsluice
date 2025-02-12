@@ -95,33 +95,17 @@ func New(config Config) (Extractor, error) {
 }
 
 func (e *extractor) newResults() Results {
-	r := Results{}
-	if e.config.UUIDVersion > 0 {
-		r.UUIDs = make(map[string]bool)
-	}
-	if e.config.ExtractEmails {
-		r.Emails = make(map[string]bool)
-	}
-	if e.config.ExtractDomains {
-		r.Domains = make(map[string]bool)
-	}
-	if e.config.ExtractIPs {
-		r.IPs = make(map[string]bool)
-	}
-	if e.config.ExtractParams {
-		r.Params = make(map[string]bool)
-	}
-	return r
+	return Results{}
 }
 
 func (e *extractor) processChunk(ctx context.Context, data string) Results {
 	select {
 	case <-ctx.Done():
-		return e.newResults()
+		return Results{}
 	default:
 	}
 
-	results := e.newResults()
+	results := Results{}
 	scanner := bufio.NewScanner(strings.NewReader(data))
 
 	for scanner.Scan() {
@@ -129,15 +113,27 @@ func (e *extractor) processChunk(ctx context.Context, data string) Results {
 
 		if e.config.UUIDVersion > 0 {
 			if regex, ok := patterns.UUIDRegexMap[e.config.UUIDVersion]; ok {
-				for _, uuid := range regex.FindAllString(line, -1) {
-					results.UUIDs[uuid] = true
+				matches := regex.FindAllString(line, -1)
+				if len(matches) > 0 {
+					if results.UUIDs == nil {
+						results.UUIDs = make(map[string]bool)
+					}
+					for _, uuid := range matches {
+						results.UUIDs[uuid] = true
+					}
 				}
 			}
 		}
 
 		if e.config.ExtractEmails {
-			for _, email := range patterns.EmailRegex.FindAllString(line, -1) {
-				results.Emails[email] = true
+			matches := patterns.EmailRegex.FindAllString(line, -1)
+			if len(matches) > 0 {
+				if results.Emails == nil {
+					results.Emails = make(map[string]bool)
+				}
+				for _, email := range matches {
+					results.Emails[email] = true
+				}
 			}
 		}
 
@@ -145,6 +141,9 @@ func (e *extractor) processChunk(ctx context.Context, data string) Results {
 			matches := patterns.DomainRegex.FindAllStringSubmatch(line, -1)
 			for _, match := range matches {
 				if len(match) > 1 && !strings.HasPrefix(match[1], ".") && !strings.HasSuffix(match[1], ".") {
+					if results.Domains == nil {
+						results.Domains = make(map[string]bool)
+					}
 					results.Domains[match[1]] = true
 				}
 			}
@@ -153,6 +152,9 @@ func (e *extractor) processChunk(ctx context.Context, data string) Results {
 		if e.config.ExtractIPs {
 			for _, ip := range patterns.IPRegex.FindAllString(line, -1) {
 				if net.ParseIP(ip) != nil {
+					if results.IPs == nil {
+						results.IPs = make(map[string]bool)
+					}
 					results.IPs[ip] = true
 				}
 			}
@@ -162,6 +164,9 @@ func (e *extractor) processChunk(ctx context.Context, data string) Results {
 			matches := patterns.QueryParamRegex.FindAllStringSubmatch(line, -1)
 			for _, match := range matches {
 				if len(match) > 2 {
+					if results.Params == nil {
+						results.Params = make(map[string]bool)
+					}
 					results.Params[match[1]+"="+match[2]] = true
 				}
 			}
@@ -271,20 +276,45 @@ func (e *extractor) Extract(ctx context.Context, reader io.Reader) (Results, err
 				return finalResults, nil
 			}
 			// Merge results
-			for k, v := range r.UUIDs {
-				finalResults.UUIDs[k] = v
+			if r.UUIDs != nil && len(r.UUIDs) > 0 {
+				if finalResults.UUIDs == nil {
+					finalResults.UUIDs = make(map[string]bool)
+				}
+				for k, v := range r.UUIDs {
+					finalResults.UUIDs[k] = v
+				}
 			}
-			for k, v := range r.Emails {
-				finalResults.Emails[k] = v
+			if r.Emails != nil && len(r.Emails) > 0 {
+				if finalResults.Emails == nil {
+					finalResults.Emails = make(map[string]bool)
+				}
+				for k, v := range r.Emails {
+					finalResults.Emails[k] = v
+				}
 			}
-			for k, v := range r.Domains {
-				finalResults.Domains[k] = v
+			if r.Domains != nil && len(r.Domains) > 0 {
+				if finalResults.Domains == nil {
+					finalResults.Domains = make(map[string]bool)
+				}
+				for k, v := range r.Domains {
+					finalResults.Domains[k] = v
+				}
 			}
-			for k, v := range r.IPs {
-				finalResults.IPs[k] = v
+			if r.IPs != nil && len(r.IPs) > 0 {
+				if finalResults.IPs == nil {
+					finalResults.IPs = make(map[string]bool)
+				}
+				for k, v := range r.IPs {
+					finalResults.IPs[k] = v
+				}
 			}
-			for k, v := range r.Params {
-				finalResults.Params[k] = v
+			if r.Params != nil && len(r.Params) > 0 {
+				if finalResults.Params == nil {
+					finalResults.Params = make(map[string]bool)
+				}
+				for k, v := range r.Params {
+					finalResults.Params[k] = v
+				}
 			}
 		case <-ctx.Done():
 			return e.newResults(), &ExtractorError{Op: "Extract", Err: ctx.Err()}

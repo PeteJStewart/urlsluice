@@ -2,6 +2,7 @@ package extractor
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"reflect"
@@ -378,5 +379,209 @@ func TestNew(t *testing.T) {
 				t.Error("New() returned nil extractor without error")
 			}
 		})
+	}
+}
+
+func TestResultsMerging(t *testing.T) {
+	// Create a large input that will trigger multiple goroutines
+	var input strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&input, "test%d@example.com\n", i)
+		fmt.Fprintf(&input, "https://domain%d.com\n", i)
+		fmt.Fprintf(&input, "192.168.1.%d\n", i)
+		fmt.Fprintf(&input, "550e8400-e29b-41d4-a716-%012d\n", i)
+		fmt.Fprintf(&input, "?param%d=value%d\n", i, i)
+	}
+
+	ext, err := New(Config{
+		UUIDVersion:    4,
+		ExtractEmails:  true,
+		ExtractDomains: true,
+		ExtractIPs:     true,
+		ExtractParams:  true,
+	})
+	if err != nil {
+		t.Fatalf("Failed to create extractor: %v", err)
+	}
+
+	results, err := ext.Extract(context.Background(), strings.NewReader(input.String()))
+	if err != nil {
+		t.Fatalf("Extract failed: %v", err)
+	}
+
+	// Verify results
+	if len(results.Emails) != 100 {
+		t.Errorf("Expected 100 emails, got %d", len(results.Emails))
+	}
+	if len(results.Domains) != 100 {
+		t.Errorf("Expected 100 domains, got %d", len(results.Domains))
+	}
+	if len(results.IPs) != 100 {
+		t.Errorf("Expected 100 IPs, got %d", len(results.IPs))
+	}
+	if len(results.Params) != 100 {
+		t.Errorf("Expected 100 params, got %d", len(results.Params))
+	}
+}
+
+func TestContextCancellation(t *testing.T) {
+	tests := []struct {
+		name      string
+		setupCtx  func() (context.Context, context.CancelFunc)
+		cancelAt  time.Duration
+		inputSize int
+		wantError bool
+	}{
+		{
+			name: "immediate cancellation",
+			setupCtx: func() (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(context.Background())
+				return ctx, cancel
+			},
+			cancelAt:  0,
+			inputSize: 1000,
+			wantError: true,
+		},
+		{
+			name: "mid-processing cancellation",
+			setupCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 50*time.Millisecond)
+			},
+			cancelAt:  0,
+			inputSize: 100000,
+			wantError: true,
+		},
+		{
+			name: "successful completion",
+			setupCtx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 5*time.Second)
+			},
+			cancelAt:  0,
+			inputSize: 100,
+			wantError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := tt.setupCtx()
+			defer cancel()
+
+			// Create large input
+			input := strings.Repeat("test@example.com\n", tt.inputSize)
+
+			ext, err := New(Config{ExtractEmails: true})
+			if err != nil {
+				t.Fatalf("Failed to create extractor: %v", err)
+			}
+
+			if tt.cancelAt > 0 {
+				time.AfterFunc(tt.cancelAt, cancel)
+			} else if tt.name == "immediate cancellation" {
+				cancel()
+			}
+
+			_, err = ext.Extract(ctx, strings.NewReader(input))
+			if tt.wantError && err == nil {
+				t.Error("Expected error, got nil")
+			}
+			if !tt.wantError && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestEdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		config  Config
+		want    Results
+		wantErr bool
+	}{
+		{
+			name:  "empty input",
+			input: "",
+			config: Config{
+				ExtractEmails:  true,
+				ExtractDomains: true,
+				ExtractIPs:     true,
+				ExtractParams:  true,
+			},
+			want:    Results{},
+			wantErr: false,
+		},
+		{
+			name:  "only whitespace",
+			input: "   \n\t   \n",
+			config: Config{
+				ExtractEmails: true,
+			},
+			want:    Results{},
+			wantErr: false,
+		},
+		{
+			name:  "very long line",
+			input: strings.Repeat("a", 1024*1024) + "@example.com",
+			config: Config{
+				ExtractEmails: true,
+			},
+			want:    Results{},
+			wantErr: false,
+		},
+		{
+			name: "mixed valid and invalid",
+			input: `invalid@
+				   valid@example.com
+				   @invalid.com
+				   192.168.1.1
+				   256.256.256.256
+				   https://valid.com
+				   https://.invalid`,
+			config: Config{
+				ExtractEmails:  true,
+				ExtractDomains: true,
+				ExtractIPs:     true,
+			},
+			want: Results{
+				Emails:  map[string]bool{"valid@example.com": true},
+				Domains: map[string]bool{"valid.com": true},
+				IPs:     map[string]bool{"192.168.1.1": true},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ext, err := New(tt.config)
+			if err != nil {
+				t.Fatalf("Failed to create extractor: %v", err)
+			}
+
+			got, err := ext.Extract(context.Background(), strings.NewReader(tt.input))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Extract() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Extract() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestExtractorError_Unwrap(t *testing.T) {
+	originalErr := fmt.Errorf("original error")
+	extractorErr := &ExtractorError{
+		Op:  "Test",
+		Err: originalErr,
+	}
+
+	unwrappedErr := extractorErr.Unwrap()
+	if unwrappedErr != originalErr {
+		t.Errorf("Unwrap() = %v, want %v", unwrappedErr, originalErr)
 	}
 }

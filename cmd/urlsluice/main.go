@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -298,7 +299,7 @@ func printResults(results extractor.Results, silent bool) error {
 	}
 
 	printSection("UUIDs", results.UUIDs)
-	printSection("Email Addresses", results.Emails)
+	printSection("Emails", results.Emails)
 	printSection("Domains", results.Domains)
 	printSection("IP Addresses", results.IPs)
 	printSection("Query Parameters", results.Params)
@@ -324,4 +325,29 @@ func parseFlags() (*Config, error) {
 	}
 
 	return config, nil
+}
+
+func processFile(config *Config) error {
+	content, err := os.ReadFile(config.FilePath)
+	if err != nil {
+		return err
+	}
+
+	ext, err := extractor.New(extractor.Config{
+		UUIDVersion:    config.UUIDVersion,
+		ExtractEmails:  config.ExtractEmails,
+		ExtractDomains: config.ExtractDomains,
+		ExtractIPs:     config.ExtractIPs,
+		ExtractParams:  config.ExtractParams,
+	})
+	if err != nil {
+		return err
+	}
+
+	results, err := ext.Extract(context.Background(), bytes.NewReader(content))
+	if err != nil {
+		return err
+	}
+
+	return printResults(results, config.Silent)
 }
