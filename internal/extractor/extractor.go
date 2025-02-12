@@ -1,4 +1,6 @@
-// Package extractor provides functionality to extract various patterns from text input
+// Package extractor provides functionality for extracting and validating various patterns from text input.
+// It supports concurrent processing of large files while maintaining memory efficiency through chunked processing.
+// Supported patterns include UUIDs, email addresses, domain names, IP addresses, and URL query parameters.
 package extractor
 
 import (
@@ -28,20 +30,28 @@ func (e *ExtractorError) Unwrap() error {
 	return e.Err
 }
 
-// Extractor defines the interface for pattern extraction
+// Extractor defines the interface for pattern extraction operations.
+// Implementations must support concurrent processing and respect context cancellation.
 type Extractor interface {
-	// Extract processes the input from reader and returns found patterns
-	// Context can be used to cancel the operation
+	// Extract processes the input from reader and returns found patterns.
+	// It supports concurrent processing and respects context cancellation.
+	// Returns ExtractorError if processing fails or context is cancelled.
 	Extract(ctx context.Context, reader io.Reader) (Results, error)
 }
 
-// Results contains all patterns found during extraction
+// Results contains all patterns found during extraction.
+// Each field is a map using the pattern as key and a boolean as value to ensure uniqueness.
 type Results struct {
-	UUIDs   map[string]bool // Map of unique UUIDs found
-	Emails  map[string]bool // Map of unique email addresses
-	Domains map[string]bool // Map of unique domain names
-	IPs     map[string]bool // Map of unique IP addresses
-	Params  map[string]bool // Map of unique query parameters
+	// UUIDs stores unique Universal Unique Identifiers
+	UUIDs map[string]bool
+	// Emails stores unique email addresses
+	Emails map[string]bool
+	// Domains stores unique domain names extracted from URLs
+	Domains map[string]bool
+	// IPs stores unique IPv4 addresses
+	IPs map[string]bool
+	// Params stores unique URL query parameters in "key=value" format
+	Params map[string]bool
 }
 
 // Config defines the configuration for pattern extraction
@@ -54,8 +64,11 @@ type Config struct {
 }
 
 const (
-	maxFileSize   = 100 * 1024 * 1024 // 100MB
-	chunkSize     = 1 * 1024 * 1024   // 1MB
+	// maxFileSize defines the maximum allowed file size (100MB) to prevent memory exhaustion
+	maxFileSize = 100 * 1024 * 1024
+	// chunkSize defines the size of each processing chunk (1MB) for optimal performance
+	chunkSize = 1 * 1024 * 1024
+	// maxGoroutines defines the maximum number of concurrent workers
 	maxGoroutines = 4
 )
 
@@ -68,7 +81,10 @@ type extractor struct {
 	config Config
 }
 
-// New creates a new Extractor with the given configuration
+// New creates a new Extractor with the given configuration.
+// It validates the configuration and returns an error if:
+// - UUID version is not between 0 and 5 (0 disables UUID extraction)
+// Returns an initialized Extractor and nil error if configuration is valid.
 func New(config Config) (Extractor, error) {
 	if config.UUIDVersion < 0 || config.UUIDVersion > 5 {
 		return nil, &ExtractorError{Op: "New", Err: fmt.Errorf("invalid UUID version: must be between 0 and 5")}

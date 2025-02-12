@@ -1,3 +1,5 @@
+// Package main provides the command-line interface for URL Sluice.
+// It handles flag parsing, configuration, and orchestrates the pattern extraction process.
 package main
 
 import (
