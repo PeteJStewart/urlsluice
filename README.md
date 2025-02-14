@@ -17,6 +17,10 @@ URL Sluice is a high-performance Go tool for extracting patterns from text files
   - Domain names
   - IP addresses
   - Query parameters
+- Wordlist generation from URLs:
+  - Extracts words from URL paths and query parameters
+  - Normalizes and deduplicates words
+  - Provides sorted output for further analysis
 
 ## Installation
 
@@ -122,6 +126,32 @@ Output:
 550e8400-e29b-41d4-a716-446655440000
 ```
 
+4. Generate a wordlist from URLs:
+
+```bash
+urlsluice -file urls.txt -wordlist
+```
+
+Sample Input:
+```text
+https://example.com/api/user-profile/settings
+https://example.com/blog/latest-posts?category=tech&author=john
+```
+
+Output:
+```text
+api
+author
+blog
+category
+john
+latest
+posts
+profile
+settings
+tech
+user
+```
 
 ## Pattern Matching Details
 
