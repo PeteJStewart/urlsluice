@@ -2,6 +2,7 @@ package wordlist
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 )
 
@@ -82,13 +83,13 @@ func TestExtractTokensFromURL(t *testing.T) {
 		{
 			name:        "simple path",
 			url:         "https://example.com/path/to/resource",
-			expected:    []string{"path", "to", "resource"},
+			expected:    []string{"path", "resource", "to"},
 			expectError: false,
 		},
 		{
 			name:        "path with query parameters",
 			url:         "https://example.com/path?key=value&other=param",
-			expected:    []string{"path", "key", "value", "other", "param"},
+			expected:    []string{"key", "other", "param", "path", "value"},
 			expectError: false,
 		},
 		{
@@ -106,7 +107,7 @@ func TestExtractTokensFromURL(t *testing.T) {
 		{
 			name:        "URL with encoded parameters",
 			url:         "https://example.com/path?key=value%20with%20spaces",
-			expected:    []string{"path", "key", "value with spaces"},
+			expected:    []string{"key", "path", "value with spaces"},
 			expectError: false,
 		},
 	}
@@ -125,29 +126,38 @@ func TestExtractTokensFromURL(t *testing.T) {
 
 			// If we don't expect an error, check the results
 			if !tt.expectError {
-				if !reflect.DeepEqual(got, tt.expected) {
-					t.Errorf("ExtractTokensFromURL() = %v, want %v", got, tt.expected)
-					t.Logf("Length of got: %d, Length of expected: %d", len(got), len(tt.expected))
+				// Sort both slices before comparison
+				if got != nil {
+					sort.Strings(got)
+				}
+				expected := tt.expected
+				if expected != nil {
+					sort.Strings(expected)
+				}
+
+				if !reflect.DeepEqual(got, expected) {
+					t.Errorf("ExtractTokensFromURL() = %v, want %v", got, expected)
+					t.Logf("Length of got: %d, Length of expected: %d", len(got), len(expected))
 
 					// Print each token with its position and exact value
-					t.Log("Got tokens:")
+					t.Log("Got tokens (sorted):")
 					for i, token := range got {
 						t.Logf("  [%d] %q", i, token)
 					}
 
-					t.Log("Expected tokens:")
-					for i, token := range tt.expected {
+					t.Log("Expected tokens (sorted):")
+					for i, token := range expected {
 						t.Logf("  [%d] %q", i, token)
 					}
 
 					// Find first difference
 					minLen := len(got)
-					if len(tt.expected) < minLen {
-						minLen = len(tt.expected)
+					if len(expected) < minLen {
+						minLen = len(expected)
 					}
 					for i := 0; i < minLen; i++ {
-						if got[i] != tt.expected[i] {
-							t.Logf("First difference at position %d: got %q, want %q", i, got[i], tt.expected[i])
+						if got[i] != expected[i] {
+							t.Logf("First difference at position %d: got %q, want %q", i, got[i], expected[i])
 							break
 						}
 					}

@@ -46,5 +46,6 @@ func ExtractTokensFromURL(urlStr string) ([]string, error) {
 			tokens = append(tokens, Tokenize(value)...)
 		}
 	}
+	sort.Strings(tokens)
 	return tokens, nil
 }
