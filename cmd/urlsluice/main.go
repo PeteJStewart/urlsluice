@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -12,17 +13,19 @@ import (
 	"flag"
 
 	"github.com/PeteJStewart/urlsluice/internal/extractor"
+	"github.com/PeteJStewart/urlsluice/internal/wordlist"
 )
 
 // Config holds the command-line configuration
 type Config struct {
-	FilePath       string
-	UUIDVersion    int
-	ExtractEmails  bool
-	ExtractDomains bool
-	ExtractIPs     bool
-	ExtractParams  bool
-	Silent         bool
+	FilePath         string
+	UUIDVersion      int
+	ExtractEmails    bool
+	ExtractDomains   bool
+	ExtractIPs       bool
+	ExtractParams    bool
+	Silent           bool
+	GenerateWordlist bool
 }
 
 func getProgramName() string {
@@ -52,7 +55,9 @@ func generateHelpText(w io.Writer, progName string) {
 	fmt.Fprintf(w, "  -queryParams\n")
 	fmt.Fprintf(w, "        Extract query parameters\n")
 	fmt.Fprintf(w, "  -silent\n")
-	fmt.Fprintf(w, "        Output data without titles\n\n")
+	fmt.Fprintf(w, "        Output data without titles\n")
+	fmt.Fprintf(w, "  -wordlist\n")
+	fmt.Fprintf(w, "        Generate a wordlist from URLs in file\n\n")
 	fmt.Fprintf(w, "Examples:\n")
 	fmt.Fprintf(w, "  Extract all patterns:\n")
 	fmt.Fprintf(w, "    %s -file input.txt -emails -domains -ips -queryParams\n\n", progName)
@@ -78,7 +83,23 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error parsing flags: %w", err)
 	}
 
-	// Create extractor
+	// Open and read input file
+	data, err := os.ReadFile(config.FilePath)
+	if err != nil {
+		return fmt.Errorf("error reading file: %w", err)
+	}
+
+	// Handle wordlist generation
+	if config.GenerateWordlist {
+		urls := strings.Split(string(data), "\n")
+		tokens := wordlist.GenerateWordlist(urls)
+		for _, token := range tokens {
+			fmt.Println(token)
+		}
+		return nil
+	}
+
+	// Create extractor for pattern extraction
 	ext, err := extractor.New(extractor.Config{
 		UUIDVersion:    config.UUIDVersion,
 		ExtractEmails:  config.ExtractEmails,
@@ -90,15 +111,8 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error creating extractor: %w", err)
 	}
 
-	// Open and process file
-	file, err := os.Open(config.FilePath)
-	if err != nil {
-		return fmt.Errorf("error opening file: %w", err)
-	}
-	defer file.Close()
-
 	// Process file
-	results, err := ext.Extract(ctx, file)
+	results, err := ext.Extract(ctx, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
@@ -147,6 +161,7 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(&config.ExtractIPs, "ips", false, "Extract IP addresses")
 	flag.BoolVar(&config.ExtractParams, "queryParams", false, "Extract query parameters")
 	flag.BoolVar(&config.Silent, "silent", false, "Output data without titles")
+	flag.BoolVar(&config.GenerateWordlist, "wordlist", false, "Generate a wordlist from URLs in file")
 
 	flag.Parse()
 

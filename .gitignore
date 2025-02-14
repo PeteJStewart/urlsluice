@@ -22,3 +22,6 @@ coverage.html
 # OS specific files
 .DS_Store
 Thumbs.db 
+
+# Test files
+testurls.txt
