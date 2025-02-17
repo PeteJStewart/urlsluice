@@ -25,3 +25,6 @@ Thumbs.db
 
 # Test files
 testurls.txt
+
+# New feature specification markdown files
+new-features/*.md
