@@ -106,24 +106,6 @@ func run(ctx context.Context) error {
 		return nil
 	}
 
-	// Create extractor for pattern extraction
-	ext, err := extractor.New(extractor.Config{
-		UUIDVersion:    config.UUIDVersion,
-		ExtractEmails:  config.ExtractEmails,
-		ExtractDomains: config.ExtractDomains,
-		ExtractIPs:     config.ExtractIPs,
-		ExtractParams:  config.ExtractParams,
-	})
-	if err != nil {
-		return fmt.Errorf("error creating extractor: %w", err)
-	}
-
-	// Process file
-	results, err := ext.Extract(ctx, bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("extraction failed: %w", err)
-	}
-
 	// Handle redirect detection if enabled
 	if config.DetectRedirects {
 		detector, err := redirect.NewRedirectDetector(config.RedirectConfig)
@@ -150,6 +132,25 @@ func run(ctx context.Context) error {
 				}
 			}
 		}
+		return nil
+	}
+
+	// Create extractor for pattern extraction
+	ext, err := extractor.New(extractor.Config{
+		UUIDVersion:    config.UUIDVersion,
+		ExtractEmails:  config.ExtractEmails,
+		ExtractDomains: config.ExtractDomains,
+		ExtractIPs:     config.ExtractIPs,
+		ExtractParams:  config.ExtractParams,
+	})
+	if err != nil {
+		return fmt.Errorf("error creating extractor: %w", err)
+	}
+
+	// Process file
+	results, err := ext.Extract(ctx, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("extraction failed: %w", err)
 	}
 
 	// Print results

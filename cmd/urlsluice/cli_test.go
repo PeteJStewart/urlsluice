@@ -188,3 +188,70 @@ https://example.com/goto?redirect=//evil.com`,
 		})
 	}
 }
+
+func TestRedirectDetectionOnly(t *testing.T) {
+	// Create temporary input file with mixed content
+	input := `https://example.com/login?next=https://evil.com
+550e8400-e29b-41d4-a716-446655440000
+https://example.com/goto?redirect=//evil.com
+user@example.com
+192.168.1.1`
+
+	tmpfile, err := os.CreateTemp("", "test*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+	tmpfile.Close()
+
+	// Capture output
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	// Reset flag.CommandLine to avoid flag redefinition errors
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+	// Set up command line arguments
+	os.Args = []string{"cmd", "-file", tmpfile.Name(), "-detect-redirects"}
+
+	// Run main
+	main()
+
+	// Restore stdout
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	buf.ReadFrom(r)
+	output := buf.String()
+
+	// Check that only redirect-related output is present
+	expectedOutputs := []string{
+		"Potential Open Redirects:",
+		"https://example.com/login?next=https://evil.com",
+		"https://example.com/goto?redirect=//evil.com",
+	}
+
+	unexpectedOutputs := []string{
+		"550e8400-e29b-41d4-a716-446655440000",
+		"user@example.com",
+		"192.168.1.1",
+	}
+
+	for _, expected := range expectedOutputs {
+		if !strings.Contains(output, expected) {
+			t.Errorf("Expected output to contain %q", expected)
+		}
+	}
+
+	for _, unexpected := range unexpectedOutputs {
+		if strings.Contains(output, unexpected) {
+			t.Errorf("Output should not contain %q", unexpected)
+		}
+	}
+}
