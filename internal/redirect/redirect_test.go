@@ -218,3 +218,65 @@ func TestScanURLs(t *testing.T) {
 		})
 	}
 }
+
+func TestScanURLs_Deduplication(t *testing.T) {
+	detector, err := NewRedirectDetector("")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name          string
+		urls          []string
+		expectedCount int
+		expectedURLs  []string
+	}{
+		{
+			name: "duplicate URLs",
+			urls: []string{
+				"https://example.com/login?next=https://evil.com",
+				"https://example.com/login?next=https://evil.com", // duplicate
+				"https://example.com/page?random=//evil.com",
+				"https://example.com/page?random=//evil.com", // duplicate
+				"https://example.com/safe?page=2",
+			},
+			expectedCount: 3,
+			expectedURLs: []string{
+				"https://example.com/login?next=https://evil.com",
+				"https://example.com/page?random=//evil.com",
+				"https://example.com/safe?page=2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results := detector.ScanURLs(tt.urls)
+
+			// Check if we got the expected number of results
+			if len(results) != tt.expectedCount {
+				t.Errorf("got %d results, want %d", len(results), tt.expectedCount)
+			}
+
+			// Check if we got the expected URLs
+			resultURLs := make([]string, len(results))
+			for i, result := range results {
+				resultURLs[i] = result.URL
+			}
+
+			// Check if all expected URLs are present
+			for _, expectedURL := range tt.expectedURLs {
+				found := false
+				for _, resultURL := range resultURLs {
+					if resultURL == expectedURL {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected URL %s not found in results", expectedURL)
+				}
+			}
+		})
+	}
+}

@@ -136,8 +136,17 @@ type MatchedParameter struct {
 
 // ScanURLs analyzes multiple URLs for potential open redirects
 func (d *RedirectDetector) ScanURLs(urls []string) []RedirectResult {
+	// Create a map to track unique URLs
+	seen := make(map[string]bool)
 	results := make([]RedirectResult, 0, len(urls))
+
 	for _, u := range urls {
+		// Skip if we've already processed this URL
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+
 		result := d.ScanURL(u)
 		results = append(results, result)
 	}
