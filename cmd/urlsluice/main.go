@@ -153,6 +153,34 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
 
+	// Handle redirect detection if enabled
+	if config.DetectRedirects {
+		detector, err := redirect.NewRedirectDetector(config.RedirectConfig)
+		if err != nil {
+			return fmt.Errorf("error creating redirect detector: %w", err)
+		}
+
+		urls := strings.Split(string(data), "\n")
+		results := detector.ScanURLs(urls)
+
+		if !config.Silent {
+			fmt.Println("\nPotential Open Redirects:")
+		}
+
+		for _, result := range results {
+			if result.IsVulnerable {
+				fmt.Println(result.URL)
+				if !config.Silent {
+					for _, param := range result.MatchedParams {
+						fmt.Printf("  Parameter: %s = %s (Known: %v)\n",
+							param.Name, param.Value, param.IsKnown)
+					}
+					fmt.Println()
+				}
+			}
+		}
+	}
+
 	// Print results
 	return printResults(results, config.Silent)
 }
