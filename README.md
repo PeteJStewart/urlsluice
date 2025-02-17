@@ -21,6 +21,7 @@ URL Sluice was inspired by the excellent tool [JSluice](https://github.com/Bisho
   - Domain names
   - IP addresses
   - Query parameters
+  - Open redirect vulnerabilities
 - Wordlist generation from URLs:
   - Extracts words from URL paths and query parameters
   - Normalizes and deduplicates words
@@ -60,6 +61,8 @@ urlsluice -file input.txt
 | `-domains` | Extract domain names | false | `-domains` |
 | `-ips` | Extract IP addresses | false | `-ips` |
 | `-queryParams` | Extract query parameters | false | `-queryParams` |
+| `-detect-redirects` | Detect potential open redirects | false | `-detect-redirects` |
+| `-redirect-config` | Path to redirect detection config file | - | `-redirect-config config.yaml` |
 | `-silent` | Output data without titles | false | `-silent` |
 
 ## Examples
@@ -156,6 +159,74 @@ settings
 tech
 user
 ```
+
+5. Detect potential open redirects:
+
+```bash
+urlsluice -file urls.txt -detect-redirects
+```
+
+Sample Input:
+```text
+https://example.com/login?next=https://evil.com
+https://api.example.org/redirect?url=//malicious.com
+https://example.com/goto?to=https://example.com/dashboard
+```
+
+Output:
+```text
+Potential Open Redirects:
+https://example.com/login?next=https://evil.com
+  Parameter: next = https://evil.com (Known: true)
+
+https://api.example.org/redirect?url=//malicious.com
+  Parameter: url = //malicious.com (Known: true)
+```
+
+6. Use custom redirect configuration:
+
+```bash
+urlsluice -file urls.txt -detect-redirects -redirect-config custom.yaml
+```
+
+### Open Redirect Detection
+
+URL Sluice includes functionality to detect potential open redirect vulnerabilities in URLs. This feature helps identify URLs that might be susceptible to redirection-based attacks.
+
+#### Configuration
+
+The redirect detection can be customized using a YAML configuration file. Here's an example configuration:
+
+```yaml
+known_parameters:
+  - next
+  - redirect
+  - url
+  - return_to
+  - goto
+  - to
+  - redirect_uri
+  - redirect_url
+  - callback
+  - return_url
+
+patterns:
+  - "^https?://"
+  - "^//"
+  - "^/"
+```
+
+- `known_parameters`: List of common parameter names used for redirects
+- `patterns`: List of patterns to match potential redirect values
+
+#### Usage Notes
+
+- Use `-detect-redirects` to enable redirect detection
+- Optionally specify a custom configuration with `-redirect-config`
+- Results show both the vulnerable URL and the specific parameters
+- Silent mode (`-silent`) will only show the vulnerable URLs
+- Detection is based on common patterns and known parameter names
+- False positives may occur; results should be manually verified
 
 ## Pattern Matching Details
 
