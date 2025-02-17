@@ -1,0 +1,8 @@
+redirect_params:
+  - custom
+  - next
+  - redirect
+  - return
+  - goto
+  - dest
+  - view 

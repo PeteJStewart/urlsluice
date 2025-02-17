@@ -13,6 +13,7 @@ import (
 	"flag"
 
 	"github.com/PeteJStewart/urlsluice/internal/extractor"
+	"github.com/PeteJStewart/urlsluice/internal/redirect"
 	"github.com/PeteJStewart/urlsluice/internal/wordlist"
 )
 
@@ -26,6 +27,8 @@ type Config struct {
 	ExtractParams    bool
 	Silent           bool
 	GenerateWordlist bool
+	DetectRedirects  bool
+	RedirectConfig   string
 }
 
 func getProgramName() string {
@@ -57,7 +60,11 @@ func generateHelpText(w io.Writer, progName string) {
 	fmt.Fprintf(w, "  -silent\n")
 	fmt.Fprintf(w, "        Output data without titles\n")
 	fmt.Fprintf(w, "  -wordlist\n")
-	fmt.Fprintf(w, "        Generate a wordlist from URLs in file\n\n")
+	fmt.Fprintf(w, "        Generate a wordlist from URLs in file\n")
+	fmt.Fprintf(w, "  -detect-redirects\n")
+	fmt.Fprintf(w, "        Detect potential open redirects\n")
+	fmt.Fprintf(w, "  -redirect-config string\n")
+	fmt.Fprintf(w, "        Path to redirect detection configuration file\n\n")
 	fmt.Fprintf(w, "Examples:\n")
 	fmt.Fprintf(w, "  Extract all patterns:\n")
 	fmt.Fprintf(w, "    %s -file input.txt -emails -domains -ips -queryParams\n\n", progName)
@@ -117,6 +124,34 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("extraction failed: %w", err)
 	}
 
+	// Handle redirect detection if enabled
+	if config.DetectRedirects {
+		detector, err := redirect.NewRedirectDetector(config.RedirectConfig)
+		if err != nil {
+			return fmt.Errorf("error creating redirect detector: %w", err)
+		}
+
+		urls := strings.Split(string(data), "\n")
+		results := detector.ScanURLs(urls)
+
+		if !config.Silent {
+			fmt.Println("\nPotential Open Redirects:")
+		}
+
+		for _, result := range results {
+			if result.IsVulnerable {
+				fmt.Println(result.URL)
+				if !config.Silent {
+					for _, param := range result.MatchedParams {
+						fmt.Printf("  Parameter: %s = %s (Known: %v)\n",
+							param.Name, param.Value, param.IsKnown)
+					}
+					fmt.Println()
+				}
+			}
+		}
+	}
+
 	// Print results
 	return printResults(results, config.Silent)
 }
@@ -162,6 +197,8 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(&config.ExtractParams, "queryParams", false, "Extract query parameters")
 	flag.BoolVar(&config.Silent, "silent", false, "Output data without titles")
 	flag.BoolVar(&config.GenerateWordlist, "wordlist", false, "Generate a wordlist from URLs in file")
+	flag.BoolVar(&config.DetectRedirects, "detect-redirects", false, "Detect potential open redirects")
+	flag.StringVar(&config.RedirectConfig, "redirect-config", "", "Path to redirect detection configuration file")
 
 	flag.Parse()
 

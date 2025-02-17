@@ -4,7 +4,11 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/PeteJStewart/urlsluice)](https://goreportcard.com/report/github.com/PeteJStewart/urlsluice)
 [![GoDoc](https://godoc.org/github.com/PeteJStewart/urlsluice?status.svg)](https://godoc.org/github.com/PeteJStewart/urlsluice)
 
+## Introduction
 URL Sluice is a high-performance Go tool for extracting patterns from text files. It processes data concurrently and efficiently handles large files while maintaining low memory usage.
+
+### Disclaimer
+URL Sluice was inspired by the excellent tool [JSluice](https://github.com/BishopFox/jsluice) created by [TomNomNom](https://github.com/tomnomnom) and now maintained by [Bishop Fox](https://github.com/BishopFox). The name is an homage to this fantastic tool that has set a high standard in JavaScript analysis. Other than the name, URL Sluice doesn't have much in common with JSluice. I highly recommend using JSluice for your JavaScript analysis, and it can be used along side URL Sluice.
 
 ## Features
 
